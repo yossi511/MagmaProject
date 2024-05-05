@@ -1,5 +1,6 @@
 import os
 import pika
+import json
 from elasticsearch import Elasticsearch
 
 # Connection to the RabbitMQ server
@@ -7,15 +8,16 @@ connection = pika.BlockingConnection(pika.ConnectionParameters('localhost'))
 channel = connection.channel()
 
 # Connection to the Elasticsearch index
-es = Elasticsearch([{'host': 'localhost', 'port': 9200}])
+es = Elasticsearch([{'host': 'localhost', 'port': 9200, 'scheme': 'http'}])
 
 # Relative path to directory for storing the images
 images_directory = "images"
 
 
 # Creating a document in the Elasticsearch index with a link to the image
+# TODO: Add image handling
 def save_to_elasticsearch(pokemon, image_path):
-    pokemon['image_path'] = image_path
+    #pokemon['image_path'] = image_path
     es.index(index='pokemon_index', body=pokemon)
 
 
@@ -23,7 +25,7 @@ def save_to_elasticsearch(pokemon, image_path):
 def callback(ch, method, properties, body):
     pokemon_data = body.decode('utf-8')  # Converting the message to a Pokémon
     pokemon = parse_pokemon_data(pokemon_data)  # Parsing the Pokémon from the original data
-    image_path = save_image(pokemon['name'], pokemon['image'])  # Saving the image and getting the path
+    image_path = save_image(pokemon['name'], pokemon['image_url'])  # Saving the image and getting the path
     save_to_elasticsearch(pokemon, image_path)  # Saving the Pokémon with the image in Elasticsearch
     print("Received and saved:", pokemon)
 
@@ -31,37 +33,23 @@ def callback(ch, method, properties, body):
 # Function for parsing the Pokémon data from the message
 # For example pokemon_data could be: "Pikachu, 25, Electric, <image-data>".
 def parse_pokemon_data(pokemon_data):
-    # Splitting the data assuming it's delimited by some character (e.g., comma)
-    parsed_data = pokemon_data.split(',')
+    pokemon_object = json.loads(pokemon_data)
 
-    # Assuming the order of properties is: name, level, type, image
-    name = parsed_data[0].strip()
-    level = int(parsed_data[1].strip())
-    pokemon_type = parsed_data[2].strip()
-    image = parsed_data[3].strip()
-
-    # Creating the Pokémon structure
-    pokemon = {
-        'name': name,
-        'level': level,
-        'type': pokemon_type,
-        'image': image
-    }
-
-    return pokemon
+    return pokemon_object
 
 
 # Function for saving the image and returning the path to the image file
+# TODO: Add handling to download image from image_url
 def save_image(pokemon_name, image_data):
     image_path = os.path.join(images_directory,
                               pokemon_name + ".jpg")  # Assuming the image arrives in a certain format and can use the Pokémon's name
-    with open(image_path, "wb") as image_file:
-        image_file.write(image_data)
+    # with open(image_path, "wb") as image_file:
+    #     image_file.write(image_data)
     return image_path
 
 
 # Setting up conditions for receiving messages from RabbitMQ
-channel.queue_declare(queue='pokemon_queue')
+channel.queue_declare(queue='pokemon_queue', durable=True)
 channel.basic_consume(queue='pokemon_queue', on_message_callback=callback, auto_ack=True)
 
 print('Waiting for messages...')
